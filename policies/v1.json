@@ -1,0 +1,39 @@
+{
+  "version": "v1-2026-09",
+  "subjects": {
+    "alice":  {"inherits": ["engineers"], "attributes": {"team": "payments"}},
+    "bob":    {"inherits": ["contractors"], "attributes": {"team": "payments"}},
+    "carol":  {"inherits": ["engineers"], "attributes": {"team": "infra"}},
+    "engineers": {"attributes": {"type": "employee"}},
+    "contractors": {"attributes": {"type": "external"}}
+  },
+  "resources": {
+    "design-doc": {"inherits": ["internal-docs"]},
+    "secrets-doc": {"inherits": ["internal-docs"], "attributes": {"classification": "secret"}},
+    "internal-docs": {"attributes": {"classification": "internal"}}
+  },
+  "rules": [
+    {
+      "id": "employees-read-internal",
+      "description": "正式员工可读 internal 文档",
+      "effect": "allow", "priority": 10,
+      "subjects": ["engineers"], "actions": ["read"], "resources": ["internal-docs"],
+      "conditions": [
+        {"key": "subject.type", "op": "eq", "value": "employee"},
+        {"key": "resource.classification", "op": "neq", "value": "secret"}
+      ]
+    },
+    {
+      "id": "deny-secrets",
+      "description": "任何人不得读 secret 文档（高优先级显式拒绝）",
+      "effect": "deny", "priority": 100,
+      "subjects": ["*"], "actions": ["*"], "resources": ["secrets-doc"]
+    },
+    {
+      "id": "contractors-deny-all",
+      "description": "外部承包商默认拒绝一切（同优先级 deny 优先的可复现兜底）",
+      "effect": "deny", "priority": 10,
+      "subjects": ["contractors"], "actions": ["*"], "resources": ["*"]
+    }
+  ]
+}

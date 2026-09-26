@@ -1,0 +1,43 @@
+{
+  "version": "v2-2026-09",
+  "subjects": {
+    "alice":  {"inherits": ["engineers"], "attributes": {"team": "payments"}},
+    "bob":    {"inherits": ["contractors"], "attributes": {"team": "payments"}},
+    "carol":  {"inherits": ["engineers"], "attributes": {"team": "infra"}},
+    "engineers": {"attributes": {"type": "employee"}},
+    "contractors": {"attributes": {"type": "external"}}
+  },
+  "resources": {
+    "design-doc": {"inherits": ["internal-docs"]},
+    "secrets-doc": {"inherits": ["internal-docs"], "attributes": {"classification": "secret"}},
+    "internal-docs": {"attributes": {"classification": "internal"}}
+  },
+  "rules": [
+    {
+      "id": "employees-read-internal",
+      "effect": "allow", "priority": 10,
+      "subjects": ["engineers"], "actions": ["read"], "resources": ["internal-docs"],
+      "conditions": [
+        {"key": "subject.type", "op": "eq", "value": "employee"},
+        {"key": "resource.classification", "op": "neq", "value": "secret"}
+      ]
+    },
+    {
+      "id": "deny-secrets",
+      "effect": "deny", "priority": 100,
+      "subjects": ["*"], "actions": ["*"], "resources": ["secrets-doc"]
+    },
+    {
+      "id": "contractors-deny-all",
+      "effect": "deny", "priority": 10,
+      "subjects": ["contractors"], "actions": ["*"], "resources": ["*"]
+    },
+    {
+      "id": "payments-write-design",
+      "description": "v2 新增：payments 团队可编辑 design-doc",
+      "effect": "allow", "priority": 20,
+      "subjects": ["engineers"], "actions": ["write"], "resources": ["design-doc"],
+      "conditions": [{"key": "subject.team", "op": "eq", "value": "payments"}]
+    }
+  ]
+}
