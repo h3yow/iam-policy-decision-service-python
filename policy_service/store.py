@@ -32,6 +32,18 @@ class PolicyStore:
             self._versions[package.version] = package
         return package
 
+    def check_candidate(self, raw: str) -> PolicyPackage:
+        """按正式加载的同一套校验检查候选包，但不登记、不生效。
+
+        与 load() 的区别仅在于不写 _versions；语法/语义错误与版本号
+        冲突同样抛出可区分的 PolicyError 子类，且任何失败都不改变状态。
+        """
+        package = parse_policy_package(raw)  # 与正式加载同一套完整校验
+        with self._lock:
+            if package.version in self._versions:
+                raise DuplicateVersionError(f"策略版本已存在: {package.version!r}")
+        return package
+
     def activate(self, version: str) -> PolicyPackage:
         """原子切换到指定已登记版本；版本不存在则抛错且状态不变。"""
         with self._lock:

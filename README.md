@@ -54,6 +54,38 @@
   返回 `outcome`、`policy_version`、`reason` 与全部 `matched_rules`
   （含继承路径），服务端日志同步打印请求输入与判定依据。
 
+## 变更预演（上线前影响面评估）
+
+`POST /policies/preview` 在**完全不触碰当前生效版本**的前提下，拿一个
+候选策略包和一批示例请求做批量双版本预演：
+
+```json
+{
+  "candidate": { "version": "v2", "rules": [ ... ] },
+  "requests": [
+    {"subject": "alice", "action": "read", "resource": "doc-1"},
+    {"subject": "bob",   "action": "write", "resource": "doc-1"}
+  ]
+}
+```
+
+- **候选包只校验、不登记、不生效**：走与 `POST /policies` 完全相同的
+  完整校验（语法/语义/版本号冲突），失败按既有可区分原因拒绝
+  （`syntax`/`semantic`/`duplicate_version`），当前生效版本不受任何影响，
+  失败时整批预演不返回任何「部分成功」结论（fail-closed）。
+- **自洽的版本快照**：预演开始时对当前生效版本取一次快照，整批请求的
+  生效侧结论都基于这同一个快照；预演期间即使有并发激活/回滚，报告内
+  每条结论依然自洽，且报告头部记录 `active_version` 与
+  `candidate_version`，每条结论附 `reason` 与 `matched_rules`，完全可追溯。
+- **逐条结果**：每个条目给出两侧各自的 `outcome`/`reason`/`matched_rules`，
+  `flipped=true` 表示结论发生翻转（allow↔deny）；`flipped=false` 表示
+  两版本结论一致。汇总字段 `flipped_count`/`error_count` 便于快速评估影响面。
+- **畸形请求隔离**：批量中个别缺字段或字段类型不对的请求只把该条标记为
+  `status="error"` 并附原因，不影响同批其他请求，整批不会因此报错。
+- **可复现、可撑量**：单次可跑数千条请求，同一批输入重复预演结果完全一致。
+
+不调用 `/policies/preview` 时，原有加载、切换、回滚、判定行为完全不变。
+
 ## 本地验证
 
 ```bash
@@ -78,6 +110,20 @@ curl -X POST localhost:8000/decide -H 'content-type: application/json' \
 curl -X POST localhost:8000/policies -H 'content-type: application/json' -d @policies/v2.json
 curl -X POST localhost:8000/policies/v2/activate
 curl -X POST localhost:8000/policies/v1/activate
+
+# 变更预演：不切换版本，先看 v2 相对当前生效版本会翻转哪些请求
+# （候选包可用任何未登记的版本号；这里假设 v3 尚未加载）
+curl -X POST localhost:8000/policies/preview -H 'content-type: application/json' -d '{
+  "candidate": {"version": "v3", "subjects": {"alice": ["employee"]},
+    "rules": [{"id": "deny-read", "effect": "deny", "priority": 10,
+               "subjects": ["employee"], "actions": ["read"], "resources": ["folder-a"]}]},
+  "requests": [{"subject": "alice", "action": "read", "resource": "doc-1"}]
+}'
+# 返回 flipped_count=1，且 GET /policies 中看不到 v3（未登记），生效版本不变
+
+# 预演相关单测（翻转识别、校验失败隔离、并发自洽、畸形请求隔离、
+# 3000 条批量可复现），日志可见每条请求的双版本结论与依据
+uv run pytest tests/test_preview.py -v
 ```
 
 ## 代码结构
@@ -86,6 +132,8 @@ curl -X POST localhost:8000/policies/v1/activate
 - `policy_service/errors.py`：可区分的拒绝原因（语法/语义/版本重复）；
 - `policy_service/loader.py`：解析与完整校验（先语法后语义）；
 - `policy_service/engine.py`：继承求值与确定性冲突处理；
-- `policy_service/store.py`：线程安全的版本仓库，原子切换与回滚；
+- `policy_service/store.py`：线程安全的版本仓库，原子切换与回滚，
+  候选包只校验不登记的 `check_candidate()`；
+- `policy_service/preview.py`：变更预演，双版本批量判定与翻转识别；
 - `main.py`：HTTP 接口；
-- `tests/`：加载器、引擎、API 与并发测试。
+- `tests/`：加载器、引擎、API、并发与预演测试。
