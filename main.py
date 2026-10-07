@@ -18,6 +18,7 @@ from policy_service.errors import (
     PolicySyntaxError,
 )
 from policy_service.models import DecisionRequest
+from policy_service.rehearsal import RehearsalReport, rehearse
 from policy_service.store import PolicyStore
 
 logger = logging.getLogger("policy-service")
@@ -32,6 +33,11 @@ class DecideBody(BaseModel):
     action: str
     resource: str
     context: dict[str, Any] = {}
+
+
+class RehearseBody(BaseModel):
+    candidate: dict[str, Any]
+    requests: list[Any]
 
 
 @app.exception_handler(PolicySyntaxError)
@@ -73,20 +79,7 @@ def list_policies() -> dict[str, Any]:
     return {"active": store.active_version(), "versions": store.versions()}
 
 
-@app.post("/decide")
-def decide(body: DecideBody) -> dict[str, Any]:
-    request = DecisionRequest(
-        subject=body.subject,
-        action=body.action,
-        resource=body.resource,
-        context=body.context,
-    )
-    decision = evaluate(store.active(), request)
-    logger.info(
-        "decide request=%s outcome=%s version=%s reason=%s matched=%s",
-        request, decision.outcome.value, decision.policy_version,
-        decision.reason, [m.rule_id for m in decision.matched_rules],
-    )
+def _decision_to_dict(decision: Any) -> dict[str, Any]:
     return {
         "outcome": decision.outcome.value,
         "policy_version": decision.policy_version,
@@ -102,6 +95,56 @@ def decide(body: DecideBody) -> dict[str, Any]:
             for m in decision.matched_rules
         ],
     }
+
+
+def _report_to_dict(report: RehearsalReport) -> dict[str, Any]:
+    return {
+        "baseline_version": report.baseline_version,
+        "candidate_version": report.candidate_version,
+        "total": report.total,
+        "flipped": report.flipped,
+        "failed": report.failed,
+        "items": [
+            {
+                "index": item.index,
+                "request": item.request,
+                "flipped": item.flipped,
+                "error": item.error,
+                "baseline": _decision_to_dict(item.baseline) if item.baseline else None,
+                "candidate": _decision_to_dict(item.candidate) if item.candidate else None,
+            }
+            for item in report.items
+        ],
+    }
+
+
+@app.post("/rehearse")
+def rehearse_policy(body: RehearseBody) -> dict[str, Any]:
+    """变更预演：候选包与当前生效版本批量对比，不登记、不生效、不改状态。"""
+    report = rehearse(store, json.dumps(body.candidate), body.requests)
+    logger.info(
+        "rehearse 完成: baseline=%s candidate=%s total=%d flipped=%d failed=%d",
+        report.baseline_version, report.candidate_version,
+        report.total, report.flipped, report.failed,
+    )
+    return _report_to_dict(report)
+
+
+@app.post("/decide")
+def decide(body: DecideBody) -> dict[str, Any]:
+    request = DecisionRequest(
+        subject=body.subject,
+        action=body.action,
+        resource=body.resource,
+        context=body.context,
+    )
+    decision = evaluate(store.active(), request)
+    logger.info(
+        "decide request=%s outcome=%s version=%s reason=%s matched=%s",
+        request, decision.outcome.value, decision.policy_version,
+        decision.reason, [m.rule_id for m in decision.matched_rules],
+    )
+    return _decision_to_dict(decision)
 
 
 @app.get("/")

@@ -54,6 +54,43 @@
   返回 `outcome`、`policy_version`、`reason` 与全部 `matched_rules`
   （含继承路径），服务端日志同步打印请求输入与判定依据。
 
+## 变更预演（rehearsal）
+
+正式上线新版本前，可以用 `POST /rehearse` 在**完全不动当前生效版本**
+的前提下，拿一个候选策略包和一批示例请求做批量预演：
+
+```json
+{
+  "candidate": { "version": "v3-candidate", "rules": [ ... ] },
+  "requests": [
+    {"subject": "alice", "action": "read",  "resource": "doc-1"},
+    {"subject": "alice", "action": "write", "resource": "doc-1"}
+  ]
+}
+```
+
+返回报告包含 `baseline_version`（预演依据的生效版本快照）、
+`candidate_version`、`total` / `flipped` / `failed` 计数，以及逐条的
+`items[]`：每条都给出请求在两个版本下各自的完整判定（`outcome`、
+`reason`、`matched_rules`），`flipped=true` 表示结论发生翻转
+（allow↔deny），`flipped=false` 表示两个版本结论一致。
+
+行为约束：
+
+- **只读**：预演不登记候选包、不切换生效版本，结束后仓库状态与开始时
+  一模一样；不带预演的既有接口（加载/切换/回滚/判定）行为完全不变。
+- **同一套校验**：候选包走与正式加载完全相同的完整校验，`syntax` /
+  `semantic` / `duplicate_version` 拒绝原因与 `POST /policies` 一致；
+  校验失败或当前无生效版本时 fail-closed，直接报错，不产生任何
+  「部分成功」的报告。
+- **快照自洽**：预演开始时取一次生效版本快照，整批请求都基于该快照
+  求值；预演期间即使有其他请求在激活/回滚版本，报告内每条结论都
+  对应报告声明的同一个 `baseline_version`。
+- **畸形请求隔离**：批量中个别缺字段或字段类型不对的请求只在该条
+  `items[].error` 中标记失败，不影响同批其他请求，整批仍返回 200。
+- **确定且可扩展**：同一批输入重复预演结果完全一致；单次可跑几千条
+  请求。服务端日志逐条打印请求输入、两个版本各自的结论与判定依据。
+
 ## 本地验证
 
 ```bash
@@ -78,6 +115,18 @@ curl -X POST localhost:8000/decide -H 'content-type: application/json' \
 curl -X POST localhost:8000/policies -H 'content-type: application/json' -d @policies/v2.json
 curl -X POST localhost:8000/policies/v2/activate
 curl -X POST localhost:8000/policies/v1/activate
+
+# 变更预演：不登记、不生效，直接对比候选包与当前生效版本。
+# 报告里 flipped=true 的条目即为切换后结论会翻转的请求
+curl -X POST localhost:8000/rehearse -H 'content-type: application/json' -d '{
+  "candidate": '"$(cat policies/v3-candidate.json)"',
+  "requests": [
+    {"subject": "alice", "action": "read",  "resource": "doc-1"},
+    {"subject": "alice", "action": "write", "resource": "doc-1"}
+  ]
+}'
+# 预演后生效版本仍是 v1，候选包未登记
+curl localhost:8000/policies
 ```
 
 ## 代码结构
@@ -87,5 +136,6 @@ curl -X POST localhost:8000/policies/v1/activate
 - `policy_service/loader.py`：解析与完整校验（先语法后语义）；
 - `policy_service/engine.py`：继承求值与确定性冲突处理；
 - `policy_service/store.py`：线程安全的版本仓库，原子切换与回滚；
+- `policy_service/rehearsal.py`：变更预演，候选包校验 + 双版本批量对比；
 - `main.py`：HTTP 接口；
-- `tests/`：加载器、引擎、API 与并发测试。
+- `tests/`：加载器、引擎、API、并发与预演测试。

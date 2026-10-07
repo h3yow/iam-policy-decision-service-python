@@ -1,0 +1,13 @@
+{
+  "version": "v3-candidate",
+  "subjects": {"alice": ["employee"], "employee": ["user"]},
+  "resources": {"doc-1": ["folder-a"], "folder-a": ["root"]},
+  "rules": [
+    {"id": "allow-employee-read", "effect": "allow", "priority": 30,
+     "subjects": ["employee"], "actions": ["read"], "resources": ["folder-a"]},
+    {"id": "deny-doc-1", "effect": "deny", "priority": 20,
+     "resources": ["doc-1"]},
+    {"id": "allow-employee-write", "effect": "allow", "priority": 5,
+     "subjects": ["employee"], "actions": ["write"], "resources": ["folder-a"]}
+  ]
+}

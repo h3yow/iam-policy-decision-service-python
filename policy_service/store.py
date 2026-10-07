@@ -48,6 +48,11 @@ class PolicyStore:
                 raise PolicyError("当前没有生效的策略版本")
             return self._versions[self._active_version]
 
+    def has_version(self, version: str) -> bool:
+        """只读查询版本是否已登记（供预演做版本号冲突校验，不登记任何内容）。"""
+        with self._lock:
+            return version in self._versions
+
     def active_version(self) -> str | None:
         with self._lock:
             return self._active_version
